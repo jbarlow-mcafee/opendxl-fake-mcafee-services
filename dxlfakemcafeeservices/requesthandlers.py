@@ -1,13 +1,23 @@
 import logging
+import re
 import time
 
 from dxlclient.callbacks import RequestCallback
 from dxlclient.message import Response, ErrorResponse
 from dxlbootstrap.util import MessageUtils
 
-
 # Configure local logger
 logger = logging.getLogger(__name__)
+
+def _make_output_item(output):
+    return {"count": 1,
+            "created_at": time.strftime('%Y-%M-%dT%H:%M:%SZ'),
+            "id": "{1=[" + str(output) + "]}",
+            "output": output}
+
+def _make_output_items(output_id, output_values):
+    return [_make_output_item({output_id: output_value})
+            for output_value in output_values]
 
 
 class FakeMarApiSearchRequestCallback(RequestCallback):
@@ -16,7 +26,33 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
     '/mcafee/mar/service/api/search'
     """
 
-    FAKE_SEARCH_ID = "fakeid"
+    IP_ADDRESS_ID = "ipaddrid"
+    PROCESSES_ID = "processesid"
+
+    RESULTS = {IP_ADDRESS_ID: _make_output_items("HostInfo|ip_address",
+                                                 ["192.168.130.152",
+                                                  "192.168.130.133"]),
+               PROCESSES_ID: _make_output_items("Processes|name",
+                                                ["MARService.exe",
+                                                 "OneDrive.exe",
+                                                 "RuntimeBroker.exe",
+                                                 "SearchIndexer.exe",
+                                                 "SearchUI.exe",
+                                                 "ShellExperienceHost.exe",
+                                                 "SkypeHost.exe",
+                                                 "System",
+                                                 "UpdaterUI.exe",
+                                                 "VGAuthService.exe",
+                                                 "WUDFHost.exe",
+                                                 "WmiApSrv.exe",
+                                                 "WmiPrvSE.exe",
+                                                 "WmiPrvSE.exe",
+                                                 "[System Process]"])}
+
+    PROJECTION_TO_ID = {
+        "HostInfo|ip_address": IP_ADDRESS_ID,
+        "Processes": PROCESSES_ID
+    }
 
     def __init__(self, app):
         """
@@ -37,6 +73,17 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
                     ]
                 }}
 
+    @staticmethod
+    def _get_projection_as_string(projections):
+        result = ""
+        for projection in projections:
+            result += projection["name"]
+            if "outputs" in projection:
+                result += "|"
+                result += "|".join(
+                    [output for output in projection["outputs"]])
+        return result
+
     def on_request(self, request):
         """
         Invoked when a request message is received.
@@ -54,50 +101,58 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
             res = Response(request)
 
             payload = {"code": 200,
-                       "body": {
-                           "id": self.FAKE_SEARCH_ID,
-                           "status": "FINISHED",
-                           "items": [
-                               {
-                                   "count": 1,
-                                   "created_at": "2016-09-19T18:03:07.722Z",
-                                   "id": "{1=[10.84.200.99]}",
-                                   "output": {
-                                       "HostInfo|ip_address": "10.84.200.99"
-                                   }
-                               }
-                           ]
-
-                       },
-                       }
+                       "body": {}}
 
             if request_payload["target"] == "/v1/simple":
                 if request_payload["method"] != 'POST':
                     payload = self._make_error_response(
                         405, "Unsupported method")
                 elif "body" not in request_payload or \
-                    "projections" not in request_payload["body"] or \
-                    request_payload["body"]["projections"] != \
-                        [{"name": "HostInfo", "outputs": ["ip_address"]}]:
+                    "projections" not in request_payload["body"]:
                     payload = self._make_error_response(
-                        501, "Unsupported projection")
-            elif not request_payload["target"].startswith(
-                            "/v1/" + self.FAKE_SEARCH_ID + "/"):
-                payload = self._make_error_response(
-                    404, "Unknown search id")
-            elif request_payload["target"].endswith("/results"):
-                if request_payload["method"] != 'GET':
+                        400, "Missing body or projections parameter")
+                else:
+                    projections_as_str = self._get_projection_as_string(
+                        request_payload["body"]["projections"])
+                    if projections_as_str in self.PROJECTION_TO_ID:
+                        payload["body"]["id"] = self.PROJECTION_TO_ID[
+                            projections_as_str]
+                    else:
+                        payload = self._make_error_response(
+                            501, "Unsupported projection")
+            else:
+                request_id = re.match(r".*/v1/(\w+)/.*",
+                                      request_payload["target"])
+                if request_id and request_id.group(1) in self.RESULTS:
+                    request_items = self.RESULTS[request_id.group(1)]
+                    if request_payload["target"].endswith("/status"):
+                        if request_payload["method"] != 'GET':
+                            payload = self._make_error_response(
+                                405, "Unsupported method")
+                        else:
+                            payload["body"]["results"] = len(request_items)
+                            payload["body"]["errors"] = 0
+                            payload["body"]["hosts"] = 1
+                            payload["body"]["subscribedHosts"] = 1
+                            payload["body"]["status"] = "FINISHED"
+                    elif request_payload["target"].endswith("/results"):
+                        if request_payload["method"] != 'GET':
+                            payload = self._make_error_response(
+                                405, "Unsupported method")
+                        elif "parameters" in request_payload and \
+                            "$offset" in request_payload["parameters"] and \
+                            "$limit" in request_payload["parameters"]:
+                            offset = request_payload["parameters"]["$offset"]
+                            limit = request_payload["parameters"]["$limit"]
+                            payload["body"]["items"] = request_items[
+                                offset:
+                                offset + limit
+                            ]
+                        else:
+                            payload["body"]["items"] = request_items
+                else:
                     payload = self._make_error_response(
-                        405, "Unsupported method")
-                elif request_payload["parameters"] != {
-                    "$offset": 0,
-                    "$limit": 10,
-                    "filter": "",
-                    "sortBy": "count",
-                    "sortDirection": "desc"
-                }:
-                    payload = self._make_error_response(
-                        501, "Unsupported parameters")
+                        404, "Id not found")
 
             # Set payload
             MessageUtils.dict_to_json_payload(res, payload)
