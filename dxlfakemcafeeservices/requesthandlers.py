@@ -91,14 +91,12 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
 
         :param request: The request message
         """
-        # Handle request
         request_payload = MessageUtils.json_payload_to_dict(request)
         logger.info(
             "Request received on topic: '{0}' with payload: '{1}'".format(
                 request.destination_topic, request_payload))
 
         try:
-            # Create response
             res = Response(request)
 
             payload = {"code": 200,
@@ -155,10 +153,7 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
                     payload = self._make_error_response(
                         404, "Id not found")
 
-            # Set payload
             MessageUtils.dict_to_json_payload(res, payload)
-
-            # Send response
             self._app.client.send_response(res)
 
         except Exception as ex:
@@ -174,6 +169,7 @@ class FakeTieReputationCallback(RequestCallback):
     '/mcafee/service/tie/file/reputation'
     """
 
+    TIE_GET_AGENTS_FOR_FILE_TOPIC = "/mcafee/service/tie/file/agents"
     TIE_GET_FILE_REPUTATION_TOPIC = "/mcafee/service/tie/file/reputation"
     TIE_SET_FILE_REPUTATION_TOPIC = "/mcafee/service/tie/file/reputation/set"
     TIE_GET_CERT_REPUTATION_TOPIC = "/mcafee/service/tie/cert/reputation"
@@ -182,6 +178,20 @@ class FakeTieReputationCallback(RequestCallback):
 
     REPUTATION_METADATA = {
         "notepad.exe": {
+            "agents": [
+                {
+                    "agentGuid": "{3a6f574a-3e6f-436d-acd4-bcde336b054d}",
+                    "date": 1475873692
+                },
+                {
+                    "agentGuid": "{d48d3d1a-915e-11e6-323a-000c2992f5d9}",
+                    "date": 1476316674
+                },
+                {
+                    "agentGuid": "{68125cd6-a5d8-11e6-348e-000c29663178}",
+                    "date": 1478626172
+                }
+            ],
             "hashes": {
                 "md5": "8se7isyX+S6Yei1Ah9AhsQ==",
                 "sha1": "frATnSF1c5s8yw0REAZ4IL5qvSk=",
@@ -291,6 +301,7 @@ class FakeTieReputationCallback(RequestCallback):
 
         self._app = app
         self._callbacks = {
+            self.TIE_GET_AGENTS_FOR_FILE_TOPIC: self._get_agents_for_file,
             self.TIE_GET_FILE_REPUTATION_TOPIC: self._get_reputation,
             self.TIE_SET_FILE_REPUTATION_TOPIC: self._set_file_reputation,
             self.TIE_GET_CERT_REPUTATION_TOPIC: self._get_cert_reputation
@@ -308,8 +319,15 @@ class FakeTieReputationCallback(RequestCallback):
             "Request received on topic: '{0}' with payload: '{1}'".format(
                 request.destination_topic, request_payload))
         if request.destination_topic in self._callbacks:
-            self._callbacks[request.destination_topic](request,
-                                                       request_payload)
+            try:
+                self._callbacks[request.destination_topic](request,
+                                                           request_payload)
+            except Exception as ex:
+                logger.exception("Error handling request")
+                err_res = ErrorResponse(request, error_code=0,
+                                        error_message=MessageUtils.encode(
+                                            str(ex)))
+                self._app.client.send_response(err_res)
         else:
             logger.exception("Unknown topic: %s", request.destination_topic)
             err_res = ErrorResponse(
@@ -378,51 +396,55 @@ class FakeTieReputationCallback(RequestCallback):
             })
             self._get_reputation(request, request_payload)
 
+    def _get_reputation_for_hashes(self, hashes):
+        hash_match_result = None
+        for hash_item in hashes:
+            hash_match_current = None
+            hash_type = hash_item["type"]
+            if hash_item["type"] in self.hash_algos_to_files:
+                hash_value = hash_item["value"]
+                if hash_item["value"] in self.hash_algos_to_files[hash_type]:
+                    hash_match_current = \
+                        self.hash_algos_to_files[hash_type][hash_value]
+            if not hash_match_current:
+                hash_match_result = None
+                break
+            if hash_match_result is None:
+                hash_match_result = hash_match_current
+            elif hash_match_current != hash_match_result:
+                hash_match_result = None
+                break
+
+        if not hash_match_result:
+            raise Exception("Could not find reputation")
+        logger.info("Reputation requested for '{0}'".format(
+            hash_match_result))
+        return hash_match_result
+
+    def _get_agents_for_file(self, request, request_payload):
+        hash_match_result = self._get_reputation_for_hashes(
+            request_payload["hashes"])
+        metadata = self.REPUTATION_METADATA[hash_match_result]
+
+        res = Response(request)
+        payload = {"agents": metadata["agents"]} if "agents" in metadata else {}
+        MessageUtils.dict_to_json_payload(res, payload)
+        self._app.client.send_response(res)
+
     def _get_reputation(self, request, request_payload):
-        try:
-            hash_match_result = None
-            for hash_item in request_payload["hashes"]:
-                hash_match_current = None
-                hash_type = hash_item["type"]
-                if hash_item["type"] in self.hash_algos_to_files:
-                    hash_value = hash_item["value"]
-                    if hash_item["value"] in self.hash_algos_to_files[hash_type]:
-                        hash_match_current = \
-                            self.hash_algos_to_files[hash_type][hash_value]
-                if not hash_match_current:
-                    hash_match_result = None
-                    break
-                if hash_match_result is None:
-                    hash_match_result = hash_match_current
-                elif hash_match_current != hash_match_result:
-                    hash_match_result = None
-                    break
+        hash_match_result = self._get_reputation_for_hashes(
+            request_payload["hashes"])
 
-            if not hash_match_result:
-                raise Exception("Could not find reputation")
-            logger.info("Reputation requested for '{0}'".format(
-                hash_match_result))
+        res = Response(request)
 
-            # Create response
-            res = Response(request)
+        payload = {
+            "props": {
+                "serverTime": int(time.time()),
+                "submitMetaData": 1
+            },
+            "reputations": self.REPUTATION_METADATA[
+                hash_match_result]["reputations"],
+        }
 
-            payload = {
-                "props": {
-                    "serverTime": int(time.time()),
-                    "submitMetaData": 1
-                },
-                "reputations": self.REPUTATION_METADATA[
-                    hash_match_result]["reputations"],
-            }
-
-            # Set payload
-            MessageUtils.dict_to_json_payload(res, payload)
-
-            # Send response
-            self._app.client.send_response(res)
-
-        except Exception as ex:
-            logger.exception("Error handling request")
-            err_res = ErrorResponse(request, error_code=0,
-                                    error_message=MessageUtils.encode(str(ex)))
-            self._app.client.send_response(err_res)
+        MessageUtils.dict_to_json_payload(res, payload)
+        self._app.client.send_response(res)

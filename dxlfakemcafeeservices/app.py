@@ -75,7 +75,8 @@ class FakeMcAfeeServices(Application):
                                   FakeMarApiSearchRequestCallback(self), True)
         logger.info("Registering request callback: {0}".format("fake_tie_file_reputation"))
         tie_reputation_callback = FakeTieReputationCallback(self)
-        for tie_topic in [FakeTieReputationCallback.TIE_GET_FILE_REPUTATION_TOPIC,
+        for tie_topic in [FakeTieReputationCallback.TIE_GET_AGENTS_FOR_FILE_TOPIC,
+                          FakeTieReputationCallback.TIE_GET_FILE_REPUTATION_TOPIC,
                           FakeTieReputationCallback.TIE_SET_FILE_REPUTATION_TOPIC,
                           FakeTieReputationCallback.TIE_GET_CERT_REPUTATION_TOPIC]:
             self.add_request_callback(service, tie_topic, tie_reputation_callback, True)
