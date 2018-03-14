@@ -3,3 +3,4 @@ dist/
 *.pyc
 build/
 dxlfakemcafeeservices.egg-info/
+sample/dxlclient.config
