@@ -72,5 +72,7 @@ class FakeMcAfeeServices(Application):
         logger.info("Registering request callback: {0}".format("fake_mar_api_search"))
         self.add_request_callback(service, "/mcafee/mar/service/api/search", FakeMarApiSearchRequestCallback(self), True)
         logger.info("Registering request callback: {0}".format("fake_tie_file_reputation"))
-        self.add_request_callback(service, "/mcafee/service/tie/file/reputation", FakeTieFileReputationRequestCallback(self), True)
+        tie_file_reputation_callback = FakeTieFileReputationCallback(self)
+        self.add_request_callback(service, "/mcafee/service/tie/file/reputation", tie_file_reputation_callback, True)
+        self.add_request_callback(service, "/mcafee/service/tie/file/reputation/set", tie_file_reputation_callback, True)
         self.register_service(service)

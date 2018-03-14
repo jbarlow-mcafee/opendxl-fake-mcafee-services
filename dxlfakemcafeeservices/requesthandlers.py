@@ -1,9 +1,10 @@
+import copy
 import logging
 import re
 import time
 
 from dxlclient.callbacks import RequestCallback
-from dxlclient.message import Response, ErrorResponse
+from dxlclient.message import Event, Response, ErrorResponse
 from dxlbootstrap.util import MessageUtils
 
 # Configure local logger
@@ -167,69 +168,80 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
             self._app.client.send_response(err_res)
 
 
-class FakeTieFileReputationRequestCallback(RequestCallback):
+class FakeTieFileReputationCallback(RequestCallback):
     """
     'fake_tie_file_reputation' request handler registered with topic
     '/mcafee/service/tie/file/reputation'
     """
 
-    HASHES = {
-        "md5": {
-            "8se7isyX+S6Yei1Ah9AhsQ==": "notepad.exe",
-            "RNiGEv6oqPNt6C4SeKuwLw==": "EICAR"
+    FILE_REPUTATION_CHANGE_TOPIC = "/mcafee/event/tie/file/repchange/broadcast"
+
+    FILE_METADATA = {
+        "notepad.exe": {
+            "hashes": {
+                "md5": "8se7isyX+S6Yei1Ah9AhsQ==",
+                "sha1": "frATnSF1c5s8yw0REAZ4IL5qvSk=",
+                "sha256": "FC4daI7wVoNww3GH/Z8jUdfd7aV0+L+psPpO9C24WqI="
+            },
+            "reputations": [
+                {
+                    "attributes": {
+                        "2120340": "2139160704"
+                    },
+                    "createDate": 1451502875,
+                    "providerId": 1,
+                    "trustLevel": 99
+                },
+                {
+                    "attributes": {
+                        "2101652": "17",
+                        "2102165": "1451502875",
+                        "2111893": "21",
+                        "2114965": "0",
+                        "2139285": "72339069014638857"
+                    },
+                    "createDate": 1451502875,
+                    "providerId": 3,
+                    "trustLevel": 0
+                }
+            ]
         },
-        "sha1": {
-            "frATnSF1c5s8yw0REAZ4IL5qvSk=": "notepad.exe",
-            "M5WFbOgfK3OC3ucmAveYtkLxQUA=": "EICAR"
+        "EICAR": {
+            "hashes": {
+                "md5": "RNiGEv6oqPNt6C4SeKuwLw==",
+                "sha1": "M5WFbOgfK3OC3ucmAveYtkLxQUA=",
+                "sha256": "J1oCG7+2SJ5U1HGJn3250WY/xpXsL+KixFOKq/ZR/Q8="
+            },
+            "reputations": [
+                {
+                    "attributes": {
+                        "2120340": "2139162632"
+                    },
+                    "createDate": 1451504331,
+                    "providerId": 1,
+                    "trustLevel": 1
+                },
+                {
+                    "attributes": {
+                        "2101652": "11",
+                        "2102165": "1451504331",
+                        "2111893": "22",
+                        "2114965": "0",
+                        "2139285": "72339069014638857"
+                    },
+                    "createDate": 1451504331,
+                    "providerId": 3,
+                    "trustLevel": 0
+                }
+            ]
         }
     }
 
-    REPUTATIONS = {
-        "notepad.exe": [
-            {
-                "attributes": {
-                    "2120340": "2139160704"
-                },
-                "createDate": 1451502875,
-                "providerId": 1,
-                "trustLevel": 99
-            },
-            {
-                "attributes": {
-                    "2101652": "17",
-                    "2102165": "1451502875",
-                    "2111893": "21",
-                    "2114965": "0",
-                    "2139285": "72339069014638857"
-                },
-                "createDate": 1451502875,
-                "providerId": 3,
-                "trustLevel": 0
-            }
-        ],
-        "EICAR": [
-            {
-                "attributes": {
-                    "2120340": "2139162632"
-                },
-                "createDate": 1451504331,
-                "providerId": 1,
-                "trustLevel": 1
-            },
-            {
-                "attributes": {
-                    "2101652": "11",
-                    "2102165": "1451504331",
-                    "2111893": "22",
-                    "2114965": "0",
-                    "2139285": "72339069014638857"
-                },
-                "createDate": 1451504331,
-                "providerId": 3,
-                "trustLevel": 0
-            }
-        ]
-    }
+    def _set_hash_algos_for_file(self, file_name, hashes):
+        for hash_type, hash_value in hashes.items():
+            if hash_type not in self.hash_algos_to_files:
+                self.hash_algos_to_files[hash_type] = {}
+            self.hash_algos_to_files[hash_type][hash_value] = file_name
 
     def __init__(self, app):
         """
@@ -237,7 +249,12 @@ class FakeTieFileReputationRequestCallback(RequestCallback):
 
         :param app: The application this handler is associated with
         """
-        super(FakeTieFileReputationRequestCallback, self).__init__()
+        super(FakeTieFileReputationCallback, self).__init__()
+
+        self.hash_algos_to_files = {}
+
+        for file_name, reputation in self.FILE_METADATA.items():
+            self._set_hash_algos_for_file(file_name, reputation["hashes"])
 
         self._app = app
 
@@ -252,16 +269,68 @@ class FakeTieFileReputationRequestCallback(RequestCallback):
         logger.info(
             "Request received on topic: '{0}' with payload: '{1}'".format(
                 request.destination_topic, request_payload))
+        if request.destination_topic.endswith("set"):
+            self.on_set_request(request, request_payload)
+        else:
+            self.on_get_request(request, request_payload)
 
+    def on_set_request(self, request, request_payload):
+        request_payload = MessageUtils.json_payload_to_dict(request)
+        file_name = request_payload["filename"]
+        new_entry = None
+
+        if file_name in self.FILE_METADATA:
+            new_reputations = self.FILE_METADATA[file_name]["reputations"]
+            for reputation_entry in new_reputations:
+                if reputation_entry["providerId"] == request_payload["providerId"]:
+                    new_entry = reputation_entry
+        else:
+            new_reputations = []
+            self.FILE_METADATA[file_name] = {"hashes": {},
+                                             "reputations": new_reputations}
+        old_reputations = copy.deepcopy(new_reputations)
+
+        old_hashes = self.FILE_METADATA[file_name]["hashes"]
+        for hash_type, hash_value in old_hashes.items():
+            if hash_type in self.hash_algos_to_files and \
+                hash_value in self.hash_algos_to_files[hash_type]:
+                del self.hash_algos_to_files[hash_type][hash_value]
+
+        new_hashes = {new_hash["type"]: new_hash["value"] \
+                      for new_hash in request_payload["hashes"]}
+        self._set_hash_algos_for_file(file_name, new_hashes)
+        self.FILE_METADATA[file_name]["hashes"] = new_hashes
+
+        if not new_entry:
+            new_entry = {"attributes": {},
+                         "providerId": request_payload["providerId"]}
+        new_entry["trustLevel"] = request_payload["trustLevel"]
+        new_entry["createDate"] = int(time.time())
+        new_reputations.append(new_entry)
+
+        self._app.client.send_response(Response(request))
+
+        event = Event(self.FILE_REPUTATION_CHANGE_TOPIC)
+        event_payload = {
+            "hashes": request_payload["hashes"],
+            "oldReputations": {"reputations": old_reputations},
+            "newReputations": {"reputations": new_reputations},
+            "updateTime": int(time.time())
+        }
+
+        MessageUtils.dict_to_json_payload(event, event_payload)
+        self._app.client.send_event(event)
+
+    def on_get_request(self, request, request_payload):
         try:
             hash_match_result = None
             for hash_item in request_payload["hashes"]:
                 hash_match_current = None
                 hash_type = hash_item["type"]
-                if hash_item["type"] in self.HASHES:
+                if hash_item["type"] in self.hash_algos_to_files:
                     hash_value = hash_item["value"]
-                    if hash_item["value"] in self.HASHES[hash_type]:
-                        hash_match_current = self.HASHES[hash_type][hash_value]
+                    if hash_item["value"] in self.hash_algos_to_files[hash_type]:
+                        hash_match_current = self.hash_algos_to_files[hash_type][hash_value]
                 if not hash_match_current:
                     hash_match_result = None
                     break
@@ -279,11 +348,13 @@ class FakeTieFileReputationRequestCallback(RequestCallback):
             # Create response
             res = Response(request)
 
-            payload = {"props": {
-                "serverTime": int(time.time()),
-                "submitMetaData": 1
-            },
-                "reputations": self.REPUTATIONS[hash_match_result],
+            payload = {
+                "props": {
+                    "serverTime": int(time.time()),
+                    "submitMetaData": 1
+                },
+                "reputations": self.FILE_METADATA[
+                    hash_match_result]["reputations"],
             }
 
             # Set payload
