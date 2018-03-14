@@ -168,15 +168,19 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
             self._app.client.send_response(err_res)
 
 
-class FakeTieFileReputationCallback(RequestCallback):
+class FakeTieReputationCallback(RequestCallback):
     """
     'fake_tie_file_reputation' request handler registered with topic
     '/mcafee/service/tie/file/reputation'
     """
 
+    TIE_GET_FILE_REPUTATION_TOPIC = "/mcafee/service/tie/file/reputation"
+    TIE_SET_FILE_REPUTATION_TOPIC = "/mcafee/service/tie/file/reputation/set"
+    TIE_GET_CERT_REPUTATION_TOPIC = "/mcafee/service/tie/cert/reputation"
+
     FILE_REPUTATION_CHANGE_TOPIC = "/mcafee/event/tie/file/repchange/broadcast"
 
-    FILE_METADATA = {
+    REPUTATION_METADATA = {
         "notepad.exe": {
             "hashes": {
                 "md5": "8se7isyX+S6Yei1Ah9AhsQ==",
@@ -234,14 +238,43 @@ class FakeTieFileReputationCallback(RequestCallback):
                     "trustLevel": 0
                 }
             ]
+        },
+        "cert1": {
+            "hashes": {
+                "sha1": "bq4m24wTGCp5R5gpkbQyFzLMPeI=",
+                "publicKeySha1": "O4ei1vOXcBYDZLeaFS/Mc7riet8="
+            },
+            "reputations": [
+                {
+                    "attributes": {
+                        "2108821": "94",
+                        "2109077": "1454912619",
+                        "2117524": "0",
+                        "2120596": "0"
+                    },
+                    "createDate": 1476318514,
+                    "providerId": 2,
+                    "trustLevel": 99
+                },
+                {
+                    "attributes": {
+                        "2109333": "12",
+                        "2109589": "1476318514",
+                        "2139285": "73183493944770750"
+                    },
+                    "createDate": 1476318514,
+                    "providerId": 4,
+                    "trustLevel": 0
+                }
+            ]
         }
     }
 
-    def _set_hash_algos_for_file(self, file_name, hashes):
+    def _set_hash_algos_for_item(self, item_name, hashes):
         for hash_type, hash_value in hashes.items():
             if hash_type not in self.hash_algos_to_files:
                 self.hash_algos_to_files[hash_type] = {}
-            self.hash_algos_to_files[hash_type][hash_value] = file_name
+            self.hash_algos_to_files[hash_type][hash_value] = item_name
 
     def __init__(self, app):
         """
@@ -249,14 +282,19 @@ class FakeTieFileReputationCallback(RequestCallback):
 
         :param app: The application this handler is associated with
         """
-        super(FakeTieFileReputationCallback, self).__init__()
+        super(FakeTieReputationCallback, self).__init__()
 
         self.hash_algos_to_files = {}
 
-        for file_name, reputation in self.FILE_METADATA.items():
-            self._set_hash_algos_for_file(file_name, reputation["hashes"])
+        for file_name, reputation in self.REPUTATION_METADATA.items():
+            self._set_hash_algos_for_item(file_name, reputation["hashes"])
 
         self._app = app
+        self._callbacks = {
+            self.TIE_GET_FILE_REPUTATION_TOPIC: self._get_reputation,
+            self.TIE_SET_FILE_REPUTATION_TOPIC: self._set_file_reputation,
+            self.TIE_GET_CERT_REPUTATION_TOPIC: self._get_cert_reputation
+        }
 
     def on_request(self, request):
         """
@@ -269,28 +307,39 @@ class FakeTieFileReputationCallback(RequestCallback):
         logger.info(
             "Request received on topic: '{0}' with payload: '{1}'".format(
                 request.destination_topic, request_payload))
-        if request.destination_topic.endswith("set"):
-            self.on_set_request(request, request_payload)
+        if request.destination_topic in self._callbacks:
+            self._callbacks[request.destination_topic](request,
+                                                       request_payload)
         else:
-            self.on_get_request(request, request_payload)
+            logger.exception("Unknown topic: %s", request.destination_topic)
+            err_res = ErrorResponse(
+                request,
+                error_code=0,
+                error_message=MessageUtils.encode(
+                    "Unknown topic: " + request.destination_topic))
+            self._app.client.send_response(err_res)
 
-    def on_set_request(self, request, request_payload):
-        request_payload = MessageUtils.json_payload_to_dict(request)
-        file_name = request_payload["filename"]
+    def _set_file_reputation(self, request, request_payload):
+        self._set_item_reputation(request, request_payload,
+                                  request_payload["filename"],
+                                  self.FILE_REPUTATION_CHANGE_TOPIC)
+
+    def _set_item_reputation(self, request, request_payload,
+                             item_name, change_topic):
         new_entry = None
 
-        if file_name in self.FILE_METADATA:
-            new_reputations = self.FILE_METADATA[file_name]["reputations"]
+        if item_name in self.REPUTATION_METADATA:
+            new_reputations = self.REPUTATION_METADATA[item_name]["reputations"]
             for reputation_entry in new_reputations:
                 if reputation_entry["providerId"] == request_payload["providerId"]:
                     new_entry = reputation_entry
         else:
             new_reputations = []
-            self.FILE_METADATA[file_name] = {"hashes": {},
-                                             "reputations": new_reputations}
+            self.REPUTATION_METADATA[item_name] = {
+                "hashes": {}, "reputations": new_reputations}
         old_reputations = copy.deepcopy(new_reputations)
 
-        old_hashes = self.FILE_METADATA[file_name]["hashes"]
+        old_hashes = self.REPUTATION_METADATA[item_name]["hashes"]
         for hash_type, hash_value in old_hashes.items():
             if hash_type in self.hash_algos_to_files and \
                 hash_value in self.hash_algos_to_files[hash_type]:
@@ -298,8 +347,8 @@ class FakeTieFileReputationCallback(RequestCallback):
 
         new_hashes = {new_hash["type"]: new_hash["value"] \
                       for new_hash in request_payload["hashes"]}
-        self._set_hash_algos_for_file(file_name, new_hashes)
-        self.FILE_METADATA[file_name]["hashes"] = new_hashes
+        self._set_hash_algos_for_item(item_name, new_hashes)
+        self.REPUTATION_METADATA[item_name]["hashes"] = new_hashes
 
         if not new_entry:
             new_entry = {"attributes": {},
@@ -310,7 +359,7 @@ class FakeTieFileReputationCallback(RequestCallback):
 
         self._app.client.send_response(Response(request))
 
-        event = Event(self.FILE_REPUTATION_CHANGE_TOPIC)
+        event = Event(change_topic)
         event_payload = {
             "hashes": request_payload["hashes"],
             "oldReputations": {"reputations": old_reputations},
@@ -321,7 +370,15 @@ class FakeTieFileReputationCallback(RequestCallback):
         MessageUtils.dict_to_json_payload(event, event_payload)
         self._app.client.send_event(event)
 
-    def on_get_request(self, request, request_payload):
+    def _get_cert_reputation(self, request, request_payload):
+        if "publicKeySha1" in request_payload:
+            request_payload["hashes"].append({
+                "type": "publicKeySha1",
+                "value": request_payload["publicKeySha1"]
+            })
+            self._get_reputation(request, request_payload)
+
+    def _get_reputation(self, request, request_payload):
         try:
             hash_match_result = None
             for hash_item in request_payload["hashes"]:
@@ -330,7 +387,8 @@ class FakeTieFileReputationCallback(RequestCallback):
                 if hash_item["type"] in self.hash_algos_to_files:
                     hash_value = hash_item["value"]
                     if hash_item["value"] in self.hash_algos_to_files[hash_type]:
-                        hash_match_current = self.hash_algos_to_files[hash_type][hash_value]
+                        hash_match_current = \
+                            self.hash_algos_to_files[hash_type][hash_value]
                 if not hash_match_current:
                     hash_match_result = None
                     break
@@ -353,7 +411,7 @@ class FakeTieFileReputationCallback(RequestCallback):
                     "serverTime": int(time.time()),
                     "submitMetaData": 1
                 },
-                "reputations": self.FILE_METADATA[
+                "reputations": self.REPUTATION_METADATA[
                     hash_match_result]["reputations"],
             }
 
