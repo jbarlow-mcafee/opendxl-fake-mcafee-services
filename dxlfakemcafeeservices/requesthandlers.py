@@ -2,6 +2,7 @@ import copy
 import logging
 import re
 import time
+import uuid
 
 from dxlclient.callbacks import RequestCallback
 from dxlclient.message import Event, Response, ErrorResponse
@@ -55,7 +56,9 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
         "Processes": PROCESSES_ID
     }
 
-    def __init__(self, app):
+    SEARCHES = {}
+
+    def __init__(self, app, status_checks_until_finished=0):
         """
         Constructor parameters:
 
@@ -63,6 +66,7 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
         """
         super(FakeMarApiSearchRequestCallback, self).__init__()
         self._app = app
+        self._status_checks_until_finished = status_checks_until_finished
 
     @staticmethod
     def _make_error_response(code, message):
@@ -114,20 +118,30 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
                     projections_as_str = self._get_projection_as_string(
                         request_payload["body"]["projections"])
                     if projections_as_str in self.PROJECTION_TO_ID:
-                        payload["body"]["id"] = self.PROJECTION_TO_ID[
-                            projections_as_str]
+                        search_id = str(uuid.uuid4()).replace("-", "")[:24]
+                        self.SEARCHES[search_id] = {
+                            "statusChecksUntilFinished": \
+                                self._status_checks_until_finished,
+                            "projectionId": self.PROJECTION_TO_ID[
+                                projections_as_str]
+                        }
+                        payload["body"]["id"] = search_id
                     else:
                         payload = self._make_error_response(
                             501, "Unsupported projection")
             else:
-                request_id = re.match(r".*/v1/(\w+)/.*",
+                search_id_match = re.match(r".*/v1/(\w+)/.*",
                                       request_payload["target"])
-                if request_id and request_id.group(1) in self.RESULTS:
-                    request_items = self.RESULTS[request_id.group(1)]
+                if search_id_match and search_id_match.group(1) in self.SEARCHES:
+                    search_entry = self.SEARCHES[search_id_match.group(1)]
+                    request_items = self.RESULTS[search_entry["projectionId"]]
                     if request_payload["target"].endswith("/status"):
                         if request_payload["method"] != 'GET':
                             payload = self._make_error_response(
                                 405, "Unsupported method")
+                        elif search_entry["statusChecksUntilFinished"]:
+                            search_entry["statusChecksUntilFinished"] -= 1
+                            payload["body"]["status"] = "RUNNING"
                         else:
                             payload["body"]["results"] = len(request_items)
                             payload["body"]["errors"] = 0

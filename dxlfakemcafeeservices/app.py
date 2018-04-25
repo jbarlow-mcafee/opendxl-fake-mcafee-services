@@ -14,6 +14,10 @@ class FakeMcAfeeServices(Application):
     The "OpenDXL Fake McAfee Services" application class.
     """
 
+    _GENERAL_CONFIG_SECTION = "General"
+    _GENERAL_MAR_STATUS_CHECKS_UNTIL_REQUEST_FINISHED = \
+        "marStatusChecksUntilRequestFinished"
+
     def __init__(self, config_dir):
         """
         Constructor parameters:
@@ -22,6 +26,7 @@ class FakeMcAfeeServices(Application):
             application
         """
         super(FakeMcAfeeServices, self).__init__(config_dir, "dxlfakemcafeeservices.config")
+        self._mar_status_checks_until_request_finished = 0
 
     @property
     def client(self):
@@ -55,6 +60,13 @@ class FakeMcAfeeServices(Application):
         :param config: The application configuration
         """
         logger.info("On 'load configuration' callback.")
+        if (config.has_option(
+                self._GENERAL_CONFIG_SECTION,
+                self._GENERAL_MAR_STATUS_CHECKS_UNTIL_REQUEST_FINISHED)):
+            self._mar_status_checks_until_request_finished = \
+                config.getint(
+                    self._GENERAL_CONFIG_SECTION,
+                    self._GENERAL_MAR_STATUS_CHECKS_UNTIL_REQUEST_FINISHED)
 
     def on_dxl_connect(self):
         """
@@ -71,8 +83,13 @@ class FakeMcAfeeServices(Application):
         logger.info("Registering service: {0}".format("fake_mcafee_service"))
         service = ServiceRegistrationInfo(self._dxl_client, "/fake/mcafee/services")
         logger.info("Registering request callback: {0}".format("fake_mar_api_search"))
-        self.add_request_callback(service, "/mcafee/mar/service/api/search",
-                                  FakeMarApiSearchRequestCallback(self), True)
+        self.add_request_callback(
+            service,
+            "/mcafee/mar/service/api/search",
+            FakeMarApiSearchRequestCallback(
+                self,
+                self._mar_status_checks_until_request_finished),
+            True)
         logger.info("Registering request callback: {0}".format("fake_tie_file_reputation"))
         tie_reputation_callback = FakeTieReputationCallback(self)
         for tie_topic in [FakeTieReputationCallback.TIE_GET_AGENTS_FOR_FILE_TOPIC,
