@@ -232,7 +232,20 @@ class FakeTieReputationCallback(RequestCallback):
                     "providerId": 3,
                     "trustLevel": 0
                 }
-            ]
+            ],
+            "relationships": {
+                "certificate": {
+                    "hashes": [
+                        {"type": "md5",
+                         "value": "MdvozEQ9LKf9I2rAClL7Fw=="},
+                        {"type": "sha1",
+                         "value": "LWykUGG3lyMS4A5ZM/3/lbuQths="},
+                        {"type": "sha256",
+                         "value": "qjxGHUwho5LjctDWykzrHk2ICY1YdllFTq9Nk8ZhiA8="}
+                    ],
+                    "publicKeySha1": "Q139Rw9ydDfHy08Hy6H5ofQnJlY="
+                }
+            }
         },
         "EICAR": {
             "hashes": {
@@ -398,6 +411,8 @@ class FakeTieReputationCallback(RequestCallback):
             "newReputations": {"reputations": new_reputations},
             "updateTime": int(time.time())
         }
+        if "relationships" in self.REPUTATION_METADATA[item_name]:
+            event_payload["relationships"] = self.REPUTATION_METADATA[item_name]["relationships"]
 
         MessageUtils.dict_to_json_payload(event, event_payload)
         self._app.client.send_event(event)
