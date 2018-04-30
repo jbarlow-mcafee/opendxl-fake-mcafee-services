@@ -82,19 +82,21 @@ class FakeMcAfeeServices(Application):
         # Register service 'fake_mcafee_service'
         logger.info("Registering service: {0}".format("fake_mcafee_service"))
         service = ServiceRegistrationInfo(self._dxl_client, "/fake/mcafee/services")
-        logger.info("Registering request callback: {0}".format("fake_mar_api_search"))
+        mar_topic = "/mcafee/mar/service/api/search"
+        logger.info("Registering request callback: {0}".format(mar_topic))
         self.add_request_callback(
             service,
-            "/mcafee/mar/service/api/search",
+            mar_topic,
             FakeMarApiSearchRequestCallback(
                 self,
                 self._mar_status_checks_until_request_finished),
             True)
-        logger.info("Registering request callback: {0}".format("fake_tie_file_reputation"))
         tie_reputation_callback = FakeTieReputationCallback(self)
         for tie_topic in [FakeTieReputationCallback.TIE_GET_AGENTS_FOR_FILE_TOPIC,
                           FakeTieReputationCallback.TIE_GET_FILE_REPUTATION_TOPIC,
                           FakeTieReputationCallback.TIE_SET_FILE_REPUTATION_TOPIC,
-                          FakeTieReputationCallback.TIE_GET_CERT_REPUTATION_TOPIC]:
+                          FakeTieReputationCallback.TIE_GET_CERT_REPUTATION_TOPIC,
+                          FakeTieReputationCallback.TIE_SET_CERT_REPUTATION_TOPIC]:
+            logger.info("Registering request callback: {0}".format(tie_topic))
             self.add_request_callback(service, tie_topic, tie_reputation_callback, True)
         self.register_service(service)

@@ -187,8 +187,10 @@ class FakeTieReputationCallback(RequestCallback):
     TIE_GET_FILE_REPUTATION_TOPIC = "/mcafee/service/tie/file/reputation"
     TIE_SET_FILE_REPUTATION_TOPIC = "/mcafee/service/tie/file/reputation/set"
     TIE_GET_CERT_REPUTATION_TOPIC = "/mcafee/service/tie/cert/reputation"
+    TIE_SET_CERT_REPUTATION_TOPIC = "/mcafee/service/tie/cert/reputation/set"
 
     FILE_REPUTATION_CHANGE_TOPIC = "/mcafee/event/tie/file/repchange/broadcast"
+    CERT_REPUTATION_CHANGE_TOPIC = "/mcafee/event/tie/cert/repchange/broadcast"
 
     REPUTATION_METADATA = {
         "notepad.exe": {
@@ -323,15 +325,16 @@ class FakeTieReputationCallback(RequestCallback):
 
         self.hash_algos_to_files = {}
 
-        for file_name, reputation in self.REPUTATION_METADATA.items():
-            self._set_hash_algos_for_item(file_name, reputation["hashes"])
+        for item_name, reputation in self.REPUTATION_METADATA.items():
+            self._set_hash_algos_for_item(item_name, reputation["hashes"])
 
         self._app = app
         self._callbacks = {
             self.TIE_GET_AGENTS_FOR_FILE_TOPIC: self._get_agents_for_file,
             self.TIE_GET_FILE_REPUTATION_TOPIC: self._get_reputation,
             self.TIE_SET_FILE_REPUTATION_TOPIC: self._set_file_reputation,
-            self.TIE_GET_CERT_REPUTATION_TOPIC: self._get_cert_reputation
+            self.TIE_GET_CERT_REPUTATION_TOPIC: self._get_cert_reputation,
+            self.TIE_SET_CERT_REPUTATION_TOPIC: self._set_cert_reputation
         }
 
     def on_request(self, request):
@@ -373,27 +376,27 @@ class FakeTieReputationCallback(RequestCallback):
                              item_name, change_topic):
         new_entry = None
 
-        if item_name in self.REPUTATION_METADATA:
-            new_reputations = self.REPUTATION_METADATA[item_name]["reputations"]
+        hash_match_result = self._get_reputation_for_hashes(
+            request_payload["hashes"], False)
+        if hash_match_result:
+            metadata = self.REPUTATION_METADATA[hash_match_result]
+            new_reputations = metadata["reputations"]
             for reputation_entry in new_reputations:
                 if reputation_entry["providerId"] == request_payload["providerId"]:
                     new_entry = reputation_entry
         else:
+            if not item_name:
+                first_hash = request_payload["hashes"][0]
+                item_name = first_hash["type"] + ":" + first_hash["value"]
             new_reputations = []
             self.REPUTATION_METADATA[item_name] = {
-                "hashes": {}, "reputations": new_reputations}
+                "hashes": {new_hash["type"]: new_hash["value"] \
+                           for new_hash in request_payload["hashes"]},
+                "reputations": new_reputations}
+            metadata = self.REPUTATION_METADATA[item_name]
+            self._set_hash_algos_for_item(item_name, metadata["hashes"])
+
         old_reputations = copy.deepcopy(new_reputations)
-
-        old_hashes = self.REPUTATION_METADATA[item_name]["hashes"]
-        for hash_type, hash_value in old_hashes.items():
-            if hash_type in self.hash_algos_to_files and \
-                hash_value in self.hash_algos_to_files[hash_type]:
-                del self.hash_algos_to_files[hash_type][hash_value]
-
-        new_hashes = {new_hash["type"]: new_hash["value"] \
-                      for new_hash in request_payload["hashes"]}
-        self._set_hash_algos_for_item(item_name, new_hashes)
-        self.REPUTATION_METADATA[item_name]["hashes"] = new_hashes
 
         if not new_entry:
             new_entry = {"attributes": {},
@@ -411,21 +414,40 @@ class FakeTieReputationCallback(RequestCallback):
             "newReputations": {"reputations": new_reputations},
             "updateTime": int(time.time())
         }
-        if "relationships" in self.REPUTATION_METADATA[item_name]:
-            event_payload["relationships"] = self.REPUTATION_METADATA[item_name]["relationships"]
+        if "publicKeySha1" in metadata["hashes"]:
+            event_payload["publicKeySha1"] = metadata["hashes"]["publicKeySha1"]
+            event_payload["hashes"] = filter(
+                lambda hash_entry: hash_entry["type"] != "publicKeySha1",
+                event_payload["hashes"]
+            )
+        if "relationships" in metadata:
+            event_payload["relationships"] = metadata["relationships"]
 
         MessageUtils.dict_to_json_payload(event, event_payload)
         self._app.client.send_event(event)
 
-    def _get_cert_reputation(self, request, request_payload):
+    @staticmethod
+    def _add_public_key_to_hashes(request_payload):
         if "publicKeySha1" in request_payload:
-            request_payload["hashes"].append({
+            hash_entry = {
                 "type": "publicKeySha1",
                 "value": request_payload["publicKeySha1"]
-            })
-            self._get_reputation(request, request_payload)
+            }
+            if "hashes" in request_payload:
+                request_payload["hashes"].append(hash_entry)
+            else:
+                request_payload["hashes"] = [hash_entry]
 
-    def _get_reputation_for_hashes(self, hashes):
+    def _get_cert_reputation(self, request, request_payload):
+        self._add_public_key_to_hashes(request_payload)
+        self._get_reputation(request, request_payload)
+
+    def _set_cert_reputation(self, request, request_payload):
+        self._add_public_key_to_hashes(request_payload)
+        self._set_item_reputation(request, request_payload, None,
+                                  self.CERT_REPUTATION_CHANGE_TOPIC)
+
+    def _get_reputation_for_hashes(self, hashes, errorOnNoMatch=True):
         hash_match_result = None
         for hash_item in hashes:
             hash_match_current = None
@@ -444,7 +466,7 @@ class FakeTieReputationCallback(RequestCallback):
                 hash_match_result = None
                 break
 
-        if not hash_match_result:
+        if not hash_match_result and errorOnNoMatch:
             raise Exception("Could not find reputation")
         logger.info("Reputation requested for '{0}'".format(
             hash_match_result))
