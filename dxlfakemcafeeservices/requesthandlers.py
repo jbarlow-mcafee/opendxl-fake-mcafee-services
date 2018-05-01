@@ -193,7 +193,10 @@ class FakeTieCallback(RequestCallback):
     CERT_REPUTATION_CHANGE_TOPIC = "/mcafee/event/tie/cert/repchange/broadcast"
 
     REPUTATION_METADATA = {
-        "notepad.exe": {
+        "sha256:FC4daI7wVoNww3GH/Z8jUdfd7aV0+L+psPpO9C24WqI=": {
+            "tags": {
+                "filename": "notepad.exe"
+            },
             "agents": [
                 {
                     "agentGuid": "{3a6f574a-3e6f-436d-acd4-bcde336b054d}",
@@ -249,7 +252,10 @@ class FakeTieCallback(RequestCallback):
                 }
             }
         },
-        "EICAR": {
+        "sha256:J1oCG7+2SJ5U1HGJn3250WY/xpXsL+KixFOKq/ZR/Q8=": {
+            "tags": {
+                "filename": "EICAR"
+            },
             "hashes": {
                 "md5": "RNiGEv6oqPNt6C4SeKuwLw==",
                 "sha1": "M5WFbOgfK3OC3ucmAveYtkLxQUA=",
@@ -278,7 +284,7 @@ class FakeTieCallback(RequestCallback):
                 }
             ]
         },
-        "cert1": {
+        "publicKeySha1:O4ei1vOXcBYDZLeaFS/Mc7riet8=": {
             "agents": [
                 {
                     "agentGuid": "{3a6f574a-3e6f-436d-acd4-bcde336b054d}",
@@ -379,12 +385,14 @@ class FakeTieCallback(RequestCallback):
             self._app.client.send_response(err_res)
 
     def _set_file_reputation(self, request, request_payload):
+        tags = {"filename": request_payload["filename"]} \
+            if "filename" in request_payload else {}
         self._set_item_reputation(request, request_payload,
-                                  request_payload["filename"],
-                                  self.FILE_REPUTATION_CHANGE_TOPIC)
+                                  self.FILE_REPUTATION_CHANGE_TOPIC,
+                                  tags)
 
     def _set_item_reputation(self, request, request_payload,
-                             item_name, change_topic):
+                             change_topic, tags=None):
         new_entry = None
 
         hash_match_result = self._get_reputation_for_hashes(
@@ -396,9 +404,8 @@ class FakeTieCallback(RequestCallback):
                 if reputation_entry["providerId"] == request_payload["providerId"]:
                     new_entry = reputation_entry
         else:
-            if not item_name:
-                first_hash = request_payload["hashes"][0]
-                item_name = first_hash["type"] + ":" + first_hash["value"]
+            first_hash = request_payload["hashes"][0]
+            item_name = first_hash["type"] + ":" + first_hash["value"]
             new_reputations = []
             self.REPUTATION_METADATA[item_name] = {
                 "hashes": {new_hash["type"]: new_hash["value"] \
@@ -406,6 +413,11 @@ class FakeTieCallback(RequestCallback):
                 "reputations": new_reputations}
             metadata = self.REPUTATION_METADATA[item_name]
             self._set_hash_algos_for_item(item_name, metadata["hashes"])
+
+        tags = tags or {}
+        if "comment" in request_payload:
+            tags["comment"] = request_payload["comment"]
+        metadata["tags"] = tags
 
         old_reputations = copy.deepcopy(new_reputations)
 
@@ -459,7 +471,7 @@ class FakeTieCallback(RequestCallback):
 
     def _set_cert_reputation(self, request, request_payload):
         self._add_public_key_to_hashes(request_payload)
-        self._set_item_reputation(request, request_payload, None,
+        self._set_item_reputation(request, request_payload,
                                   self.CERT_REPUTATION_CHANGE_TOPIC)
 
     def _get_reputation_for_hashes(self, hashes, errorOnNoMatch=True):
