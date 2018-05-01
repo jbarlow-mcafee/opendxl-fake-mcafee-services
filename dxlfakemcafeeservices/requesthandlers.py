@@ -186,6 +186,8 @@ class FakeTieReputationCallback(RequestCallback):
     TIE_GET_AGENTS_FOR_FILE_TOPIC = "/mcafee/service/tie/file/agents"
     TIE_GET_FILE_REPUTATION_TOPIC = "/mcafee/service/tie/file/reputation"
     TIE_SET_FILE_REPUTATION_TOPIC = "/mcafee/service/tie/file/reputation/set"
+
+    TIE_GET_AGENTS_FOR_CERT_TOPIC = "/mcafee/service/tie/cert/agents"
     TIE_GET_CERT_REPUTATION_TOPIC = "/mcafee/service/tie/cert/reputation"
     TIE_SET_CERT_REPUTATION_TOPIC = "/mcafee/service/tie/cert/reputation/set"
 
@@ -279,6 +281,16 @@ class FakeTieReputationCallback(RequestCallback):
             ]
         },
         "cert1": {
+            "agents": [
+                {
+                    "agentGuid": "{3a6f574a-3e6f-436d-acd4-bcde336b054d}",
+                    "date": 1475873692
+                },
+                {
+                    "agentGuid": "{68125cd6-a5d8-11e6-348e-000c29663178}",
+                    "date": 1478626172
+                }
+            ],
             "hashes": {
                 "sha1": "bq4m24wTGCp5R5gpkbQyFzLMPeI=",
                 "publicKeySha1": "O4ei1vOXcBYDZLeaFS/Mc7riet8="
@@ -330,9 +342,10 @@ class FakeTieReputationCallback(RequestCallback):
 
         self._app = app
         self._callbacks = {
-            self.TIE_GET_AGENTS_FOR_FILE_TOPIC: self._get_agents_for_file,
+            self.TIE_GET_AGENTS_FOR_FILE_TOPIC: self._get_agents,
             self.TIE_GET_FILE_REPUTATION_TOPIC: self._get_reputation,
             self.TIE_SET_FILE_REPUTATION_TOPIC: self._set_file_reputation,
+            self.TIE_GET_AGENTS_FOR_CERT_TOPIC: self._get_agents_for_cert,
             self.TIE_GET_CERT_REPUTATION_TOPIC: self._get_cert_reputation,
             self.TIE_SET_CERT_REPUTATION_TOPIC: self._set_cert_reputation
         }
@@ -438,6 +451,10 @@ class FakeTieReputationCallback(RequestCallback):
             else:
                 request_payload["hashes"] = [hash_entry]
 
+    def _get_agents_for_cert(self, request, request_payload):
+        self._add_public_key_to_hashes(request_payload)
+        self._get_agents(request, request_payload)
+
     def _get_cert_reputation(self, request, request_payload):
         self._add_public_key_to_hashes(request_payload)
         self._get_reputation(request, request_payload)
@@ -472,7 +489,7 @@ class FakeTieReputationCallback(RequestCallback):
             hash_match_result))
         return hash_match_result
 
-    def _get_agents_for_file(self, request, request_payload):
+    def _get_agents(self, request, request_payload):
         hash_match_result = self._get_reputation_for_hashes(
             request_payload["hashes"])
         metadata = self.REPUTATION_METADATA[hash_match_result]
@@ -493,9 +510,11 @@ class FakeTieReputationCallback(RequestCallback):
                 "serverTime": int(time.time()),
                 "submitMetaData": 1
             },
-            "reputations": self.REPUTATION_METADATA[
-                hash_match_result]["reputations"],
         }
+
+        if "reputations" in self.REPUTATION_METADATA[hash_match_result]:
+            payload["reputations"] = \
+                self.REPUTATION_METADATA[hash_match_result]["reputations"]
 
         MessageUtils.dict_to_json_payload(res, payload)
         self._app.client.send_response(res)

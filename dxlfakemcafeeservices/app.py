@@ -95,6 +95,7 @@ class FakeMcAfeeServices(Application):
         for tie_topic in [FakeTieReputationCallback.TIE_GET_AGENTS_FOR_FILE_TOPIC,
                           FakeTieReputationCallback.TIE_GET_FILE_REPUTATION_TOPIC,
                           FakeTieReputationCallback.TIE_SET_FILE_REPUTATION_TOPIC,
+                          FakeTieReputationCallback.TIE_GET_AGENTS_FOR_CERT_TOPIC,
                           FakeTieReputationCallback.TIE_GET_CERT_REPUTATION_TOPIC,
                           FakeTieReputationCallback.TIE_SET_CERT_REPUTATION_TOPIC]:
             logger.info("Registering request callback: {0}".format(tie_topic))
