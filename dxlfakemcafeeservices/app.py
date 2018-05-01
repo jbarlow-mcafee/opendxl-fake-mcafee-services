@@ -91,13 +91,13 @@ class FakeMcAfeeServices(Application):
                 self,
                 self._mar_status_checks_until_request_finished),
             True)
-        tie_reputation_callback = FakeTieReputationCallback(self)
-        for tie_topic in [FakeTieReputationCallback.TIE_GET_AGENTS_FOR_FILE_TOPIC,
-                          FakeTieReputationCallback.TIE_GET_FILE_REPUTATION_TOPIC,
-                          FakeTieReputationCallback.TIE_SET_FILE_REPUTATION_TOPIC,
-                          FakeTieReputationCallback.TIE_GET_AGENTS_FOR_CERT_TOPIC,
-                          FakeTieReputationCallback.TIE_GET_CERT_REPUTATION_TOPIC,
-                          FakeTieReputationCallback.TIE_SET_CERT_REPUTATION_TOPIC]:
+        tie_callback = FakeTieCallback(self)
+        for tie_topic in [FakeTieCallback.TIE_GET_AGENTS_FOR_FILE_TOPIC,
+                          FakeTieCallback.TIE_GET_FILE_REPUTATION_TOPIC,
+                          FakeTieCallback.TIE_SET_FILE_REPUTATION_TOPIC,
+                          FakeTieCallback.TIE_GET_AGENTS_FOR_CERT_TOPIC,
+                          FakeTieCallback.TIE_GET_CERT_REPUTATION_TOPIC,
+                          FakeTieCallback.TIE_SET_CERT_REPUTATION_TOPIC]:
             logger.info("Registering request callback: {0}".format(tie_topic))
-            self.add_request_callback(service, tie_topic, tie_reputation_callback, True)
+            self.add_request_callback(service, tie_topic, tie_callback, True)
         self.register_service(service)

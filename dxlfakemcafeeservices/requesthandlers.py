@@ -177,10 +177,8 @@ class FakeMarApiSearchRequestCallback(RequestCallback):
             self._app.client.send_response(err_res)
 
 
-class FakeTieReputationCallback(RequestCallback):
+class FakeTieCallback(RequestCallback):
     """
-    'fake_tie_file_reputation' request handler registered with topic
-    '/mcafee/service/tie/file/reputation'
     """
 
     TIE_GET_AGENTS_FOR_FILE_TOPIC = "/mcafee/service/tie/file/agents"
@@ -333,7 +331,7 @@ class FakeTieReputationCallback(RequestCallback):
 
         :param app: The application this handler is associated with
         """
-        super(FakeTieReputationCallback, self).__init__()
+        super(FakeTieCallback, self).__init__()
 
         self.hash_algos_to_files = {}
 
